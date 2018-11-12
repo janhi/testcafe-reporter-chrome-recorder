@@ -7,6 +7,10 @@ const sleep = require('sleep');
 const tempPath = process.env.CHROME_RECORDER_TMP_DIR || '/tmp/chrome-recorder';
 const outputPath = process.env.CHROME_RECORDER_OUTPUT_DIR || process.cwd();
 const outputFormat = process.env.CHROME_RECORDER_FRAME_FORMAT || 'jpeg';
+let consecutiveNumbering = false;
+if (process.env.CONSECUTIVE_NUMBERING !== undefined && process.env.CONSECUTIVE_NUMBERING.toLower() === "true") {
+    consecutiveNumbering = true;
+}
 // function getBrowserId () {
 //     const testRun = testRunTracker.resolveContextTestRun();
 
@@ -20,6 +24,7 @@ let shuttingDown = false;
 const quality = 60;
 const stats = {};
 let savingInProgress = 0;
+let frameCount = 0;
 
 function enableScreencast (client, browserId) {
     return function () {
@@ -32,7 +37,13 @@ function enableScreencast (client, browserId) {
                 stats[browserId].end = frame.metadata.timestamp;
                 ++stats[browserId].framesSaved;
                 ++savingInProgress;
-                fs.outputFile(`${tempPath}/${browserId}/frame-${frame.metadata.timestamp*1000000}.${outputFormat}`, frame.data, 'base64', function () { // eslint-disable-line
+                const path = (consecutiveNumbering) ?
+                    `${tempPath}/${browserId}/frame-${frameCount.toString().padStart(8, '0')}.${outputFormat}` :
+                    `${tempPath}/${browserId}/frame-${frame.metadata.timestamp*1000000}.${outputFormat}`;
+                fs.outputFile(path, frame.data, 'base64', function () { // eslint-disable-line
+                    if (consecutiveNumbering) {
+                        ++frameCount;
+                    }
                     --savingInProgress;
                 });
             }
@@ -50,19 +61,20 @@ function disableScreencast (browserId) {
 
 function framesToVideo (browserId) {
     try {
+        const inputOptions = (consecutiveNumbering) ? '' : '-pattern_type glob';
         ffmpeg()
-        .addInput(`${tempPath}/${browserId}/frame-*.${outputFormat}`)
-        .inputOptions('-pattern_type glob')
-        .outputFps(Math.ceil(stats[browserId].framesSaved / ( stats[browserId].end - stats[browserId].start )))
-        .videoCodec('libx264')
-        .on('error', function (err) {
-            console.log('An error occurred: ' + err.message);
-        })
-        .on('end', function () {
-            fs.removeSync(`${tempPath}/${browserId}`);
-            console.log(`Saved video file to ${outputPath}/${browserId}.mp4`);
-        })
-        .save(`${outputPath}/${browserId}.mp4`);
+            .addInput(`${tempPath}/${browserId}/frame-*.${outputFormat}`)
+            .inputOptions(inputOptions)
+            .outputFps(Math.ceil(stats[browserId].framesSaved / (stats[browserId].end - stats[browserId].start)))
+            .videoCodec('libx264')
+            .on('error', function (err) {
+                console.log('An error occurred: ' + err.message);
+            })
+            .on('end', function () {
+                fs.removeSync(`${tempPath}/${browserId}`);
+                console.log(`Saved video file to ${outputPath}/${browserId}.mp4`);
+            })
+            .save(`${outputPath}/${browserId}.mp4`);
     }
     catch (error) {
         console.error('Unexpected error', error);
